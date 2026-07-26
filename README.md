@@ -1,55 +1,104 @@
 # Tennis Kalshi Bot
 
 Tennis match prediction + Kalshi edge-identification system. Separate project
-from the MLB bot - different repo, different data, different everything.
+from the MLB bot - different repo, different data, different everything,
+different Telegram bot (@tennis6754_bot, credentials in `.env`, never
+committed).
 
-## Status: Steps 1-4 of 8 built and confirmed with live data
-
-Data pipeline, feature engineering, the 4-model ensemble, and Kalshi edge
-identification are all working end to end. Telegram alerts, the trade
-tracker, and the continuous-learning/scheduling steps (5-8) are next.
+## Status: all 8 steps built and running on a live schedule
 
 By decision (2026-07-26): **ATP only for now** - see "Known gaps" below.
 
-## What's working right now
+## The one thing to know: it's already scheduled and running
+
+You don't need to run anything manually. 8 Routines are live in this
+environment and will keep firing on their own:
+
+| Routine | When (Central Time) | What it does |
+|---|---|---|
+| Tennis - 10pm evening picks (CRITICAL) | 10:00pm daily | The main picks message - the whole reason this project exists |
+| Tennis - 8am morning update | 8:00am daily | Refreshes prices for today's post-8am flagged matches |
+| Tennis - hourly pre-match alert and result check | every hour | ~T-70min match reminders + result settlement (see "hourly limit" below) |
+| Tennis - 9pm daily summary | 9:00pm daily | Today's/running record, P&L, bankroll, Brier trend |
+| Tennis - Sunday 3am full retrain | Sunday 3:00am | Re-pulls data, retrains all 4 models, sends a model-update message |
+| Tennis - monthly report | 1st of month, 8:00am | Accuracy/ROI breakdowns by surface/tier/favorite-underdog/etc |
+| Tennis - DST reminder (fall back) | one-shot, Oct 27 2026 | Shifts all the above 1hr for the Nov 1 DST change |
+| Tennis - DST reminder (spring forward) | one-shot, Mar 9 2027 | Shifts all the above 1hr for the Mar 14 DST change |
+
+Two disclosed platform tradeoffs, not silent ones:
+- **Hourly is the fastest polling this scheduler supports** - there's no
+  "every 5 minutes" option. So the T-30-minute pre-match alert actually
+  fires sometime in the ~70 minutes before a match (deduped via
+  `pre_match_alert_sent` in `data/trades.csv` so it's still exactly once
+  per match), and match results get checked hourly rather than instantly.
+- **Cron times are fixed UTC** and don't auto-follow US Central's DST
+  changes. The two DST-reminder Routines above exist specifically to shift
+  everything by an hour at each transition, so you shouldn't need to think
+  about this at all unless one of those reminders asks you something.
+
+## What's built, step by step
 
 **Step 1 - data pipeline**
-- `data_pipeline/fetch_historical_matches.py` - pulls ~10 years of ATP match
-  history from Tennismylife/TML-Database (GitHub), then patches in everything
-  more recent from Tennismylife's own live-website API (see "Known gaps" -
-  the GitHub mirror turned out to be 6+ months stale). Full stats: aces,
-  double faults, serve %, break points, rankings, surface, tier, round,
+- `data_pipeline/fetch_historical_matches.py` - ~10 years of ATP match
+  history from Tennismylife/TML-Database (GitHub), patched with same-day
+  results from Tennismylife's live-website API (the GitHub mirror turned
+  out to be 6+ months stale - see "Known gaps"). Full stats: aces, double
+  faults, serve %, break points, rankings, surface, tier, round,
   indoor/outdoor, duration, retirement/walkover flag.
 - `data_pipeline/fetch_kalshi.py` - live ATP + WTA match markets from the
-  public Kalshi API, paired into one row per match with start times
-  converted to Central Time for early-morning flagging.
-- `data_pipeline/confirm_step1.py` - prints the Step 1 confirmation report.
+  public Kalshi API, paired into one row per match, times in Central.
+- `data_pipeline/confirm_step1.py` - the Step 1 confirmation report.
 
 **Step 2 - feature engineering**
-- `data_pipeline/feature_engineering.py` - walks every match in chronological
-  order, building surface/form/H2H/ranking-Elo/tournament/serve-return/
-  physical-scheduling features from only what was known before that match
-  (no leakage), with a randomized player_1/player_2 assignment per row.
-- `data_pipeline/tournament_metadata.py` - hand-curated venue lookup
-  (country/coordinates/altitude) for the ~60 tournaments that repeat yearly.
+- `data_pipeline/feature_engineering.py` - chronological walk building
+  surface/form/H2H/ranking-Elo/tournament/serve-return/physical-scheduling
+  features from only what was known before each match (no leakage), with
+  randomized player_1/player_2 assignment per row.
+- `data_pipeline/tournament_metadata.py` - venue lookup (country/coords/
+  altitude) for the ~60 tournaments that repeat yearly.
 
 **Step 3 - the 4-model ensemble**
-- `models/prepare_model_data.py` - encodes categoricals, chronological
+- `models/prepare_model_data.py` - categorical encoding, chronological
   68/12/20 train/validation/test split.
 - `models/train_ensemble.py` - logistic regression, 500-tree random forest,
-  XGBoost (tuned via 5-fold `TimeSeriesSplit`), and a 64/32 dropout neural
-  net (torch); weights the ensemble by validation Brier score, calibrates
-  with isotonic regression, and reports accuracy/Brier/log-loss/ROI/
-  calibration curve on the held-out test set. Artifacts saved to
-  `models/artifacts/` (gitignored - regenerate by re-running the script).
+  XGBoost (5-fold `TimeSeriesSplit` tuning), and a 64/32 dropout neural net
+  (torch); ensemble weighted by validation Brier score, isotonic
+  calibration, full evaluation (accuracy/Brier/log-loss/ROI/calibration
+  curve) on the held-out test set. Held-out test accuracy: ~65%, Brier
+  ~0.214 (vs. 0.25 coin-flip). Artifacts in `models/artifacts/`
+  (gitignored - regenerated by re-running the script).
 
 **Step 4 - Kalshi edge identification**
-- `models/predict_upcoming.py` - for each upcoming ATP match on Kalshi:
-  matches player names to historical player IDs, infers surface/tournament
-  context, builds live features from each player's current state, runs the
-  trained ensemble, compares to the Kalshi price, and applies the HIGH
-  CONVICTION / STANDARD / EARLY MORNING PRIORITY / skip rules with 25% Kelly
-  bet sizing (capped at $144, $500 total exposure).
+- `models/predict_upcoming.py` - matches Kalshi player names to historical
+  player IDs, infers surface/tournament context, builds live features from
+  each player's current state, runs the ensemble, compares to the Kalshi
+  price, and applies HIGH CONVICTION / STANDARD / EARLY MORNING PRIORITY /
+  skip rules with 25% Kelly sizing (capped at $144/match, $500 total
+  exposure, enforced by actually shrinking bet sizes, not just warning).
+
+**Step 5 - Telegram alerts**
+- `notifications/telegram_bot.py` - Bot API wrapper, plain text (Telegram's
+  Markdown parser breaks on underscores in feature names - see commit
+  history for the bug this caused).
+- `notifications/format_messages.py` + one `send_*.py` script per message
+  type (evening picks, morning update, pre-match alert, result update,
+  daily summary), matching the spec's exact message formats.
+
+**Step 6 - trade tracker**
+- `trades/trade_tracker.py` - `data/trades.csv`, one row per recommendation,
+  auto-logged at 10pm and updated in place as morning prices/results come
+  in. `actual_bet_placed` is intentionally left blank for you to fill in.
+
+**Step 7 - continuous learning**
+- `trades/analytics.py` - accuracy/ROI breakdowns by surface, tier,
+  confidence tier, early-morning vs. normal, favorites vs. underdogs, plus
+  a simple systematic-error flag (any bucket trailing overall accuracy by
+  15+ points with a decent sample size).
+- `models/retrain_weekly.py` - full retrain from fresh data, old-vs-new
+  Brier comparison, Telegram update.
+- `notifications/send_monthly_report.py` - the monthly breakdown message.
+
+**Step 8 - scheduling** - the Routines table above.
 
 ## Known gaps (disclosed, not silently worked around)
 
@@ -68,13 +117,17 @@ By decision (2026-07-26): **ATP only for now** - see "Known gaps" below.
 - **No live rankings/injury-news feed.** Current ranking is inferred from
   each player's most recent tracked match rather than a live rankings API.
   The retirement/injury skip rule only checks a manual watchlist
-  (`data/injury_watchlist.csv`, empty by default) - there's no connected
-  news source yet.
+  (`data/injury_watchlist.csv`, empty by default) - add a player name there
+  to force a skip; there's no connected news source yet.
 - **Tournament venue metadata (altitude/coordinates/home country) only
   covers ~60 recurring tournaments** - one-off events fall back to unknown
   rather than a guessed location.
+- **The Step 3 ROI simulation is a model-quality check, not a real
+  backtest** - it assumes flat even-money odds because historical Kalshi
+  prices aren't merged into training data. Real edge-vs-market ROI is what
+  Step 4 computes for live matches, using actual Kalshi prices.
 
-## Running it yourself
+## Running it yourself (manual / debugging)
 
 ```
 python3 -m venv venv
@@ -84,5 +137,10 @@ pip install -r requirements.txt
 python3 data_pipeline/confirm_step1.py       # Step 1 check
 python3 data_pipeline/feature_engineering.py # Step 2: builds data/processed_features.csv
 python3 models/train_ensemble.py             # Step 3: trains + saves models/artifacts/
-python3 models/predict_upcoming.py           # Step 4: tomorrow's Kalshi edge report
+python3 models/predict_upcoming.py           # Step 4: tomorrow's Kalshi edge report (console only)
+python3 notifications/send_evening_picks.py  # Steps 4+5+6: the real 10pm job, sends to Telegram + logs trades.csv
+python3 models/retrain_weekly.py             # Step 7: full weekly retrain
 ```
+
+`.env` needs `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (not committed -
+ask if you need these regenerated).

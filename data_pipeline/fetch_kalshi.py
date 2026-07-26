@@ -37,6 +37,12 @@ def _get(path, params=None, timeout=20):
     return resp.json()
 
 
+def fetch_event_by_ticker(event_ticker):
+    """Single-event lookup, regardless of status - used to check whether a match has resolved yet."""
+    payload = _get(f"/events/{event_ticker}", params={"with_nested_markets": "true"})
+    return payload.get("event"), payload.get("markets", [])
+
+
 def fetch_events_with_markets(series_ticker, status="open", max_pages=20):
     """Page through all events (with nested markets) for a series ticker."""
     events = []

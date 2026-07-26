@@ -227,27 +227,59 @@ def classify_opportunity(edge_pp, model_prob, volume, start_hour_ct):
     return None
 
 
-def main():
-    print("Loading historical ATP matches and rebuilding current player state...")
+def apply_exposure_cap(recommendations, max_total=MAX_TOTAL_EXPOSURE):
+    """
+    Actually enforce the $500 total-exposure cap (not just warn about it):
+    process highest-edge opportunities first, shrink or drop whatever would
+    push the running total over the cap.
+    """
+    ordered = sorted(recommendations, key=lambda x: -x["edge_pp"])
+    total = 0.0
+    for r in ordered:
+        remaining = round(max_total - total, 2)
+        if remaining <= 0:
+            r["original_bet_size"] = r["bet_size"]
+            r["bet_size"] = 0.0
+            r["exposure_note"] = "skipped - $500 total exposure cap reached"
+        elif r["bet_size"] > remaining:
+            r["original_bet_size"] = r["bet_size"]
+            r["bet_size"] = remaining
+            r["exposure_note"] = "reduced to fit $500 total exposure cap"
+        else:
+            r["exposure_note"] = None
+        total += r["bet_size"]
+    return ordered
+
+
+def generate_recommendations(verbose=True):
+    """
+    Runs the full Step 4 pipeline and returns (recommendations, skipped,
+    tomorrow_matches) without printing - the reusable entry point for
+    Telegram alerts (Step 5) and the trade tracker (Step 6).
+    """
+    if verbose:
+        print("Loading historical ATP matches and rebuilding current player state...")
     matches, _ = fetch_all_historical_matches(verbose=False)
     _features_unused, players, h2h = build_training_features(matches, verbose=False)
     historical_tourney_names = set(matches["tourney_name"].unique())
     name_lookup = build_name_lookup(players)
     injury_watchlist = load_injury_watchlist()
-    print(f"  {len(players):,} known players, {len(historical_tourney_names)} known tournament names")
-
-    print("Loading trained ensemble...")
+    if verbose:
+        print(f"  {len(players):,} known players, {len(historical_tourney_names)} known tournament names")
+        print("Loading trained ensemble...")
     models, preprocessing, calibrator, weights, feature_names = load_trained_ensemble()
 
-    print("Fetching live Kalshi tennis markets...")
+    if verbose:
+        print("Fetching live Kalshi tennis markets...")
     kalshi_matches = fetch_all_tennis_matches()
     atp_matches = [m for m in kalshi_matches if m["tour"] == "ATP"]
 
     today_ct = datetime.now(CENTRAL).date()
     tomorrow_ct = today_ct + timedelta(days=1)
     tomorrow_matches = matches_for_date(atp_matches, tomorrow_ct)
-    print(f"  {len(tomorrow_matches)} ATP matches on Kalshi tomorrow ({tomorrow_ct})")
-    print("  (WTA markets are live on Kalshi but skipped here - no trained WTA model yet)")
+    if verbose:
+        print(f"  {len(tomorrow_matches)} ATP matches on Kalshi tomorrow ({tomorrow_ct})")
+        print("  (WTA markets are live on Kalshi but skipped here - no trained WTA model yet)")
 
     recommendations = []
     skipped = []
@@ -337,7 +369,9 @@ def main():
             expected_profit = bet_size * (1 - price) / price * model_p - bet_size * (1 - model_p)
             candidates.append({
                 "matchup": m["matchup"], "tour": m["tour"], "start_time_ct": m["start_time_ct"],
+                "event_ticker": m["event_ticker"],
                 "start_hour_ct": m["start_hour_ct"], "tournament": tourney_name, "round": round_code,
+                "surface": surface,
                 "recommended_side": player_name, "opponent": p2_name if side == "player_1" else p1_name,
                 "model_prob": round(model_p, 4), "kalshi_price": price, "implied_prob": round(implied_prob, 4),
                 "edge_pp": round(edge_pp, 2), "volume": volume, "tier": tier, "bet_size": bet_size,
@@ -347,6 +381,11 @@ def main():
         if candidates:
             recommendations.append(max(candidates, key=lambda c: c["edge_pp"]))
 
+    recommendations = apply_exposure_cap(recommendations)
+    return recommendations, skipped, tomorrow_matches
+
+
+def print_report(recommendations, skipped, tomorrow_matches):
     print(f"\n{'='*70}\nSTEP 4 - EDGE IDENTIFICATION RESULTS\n{'='*70}")
     print(f"\nMatches evaluated: {len(tomorrow_matches)}  |  Recommendations: {len(recommendations)}  |  Skipped: {len(skipped)}")
 
@@ -355,20 +394,23 @@ def main():
         for matchup, reason in skipped:
             print(f"  {matchup}: {reason}")
 
-    total_exposure = 0.0
-    for r in sorted(recommendations, key=lambda x: -x["edge_pp"]):
-        total_exposure += r["bet_size"]
-        flag = "over $500 total exposure cap - reduce sizing" if total_exposure > MAX_TOTAL_EXPOSURE else ""
+    total_exposure = sum(r["bet_size"] for r in recommendations)
+    for r in recommendations:
         print(f"\n[{r['tier']}] {r['matchup']} ({r['tournament']}, {r['round']}) - {r['start_time_ct']}")
         print(f"  Recommended: BUY YES on {r['recommended_side']}")
         print(f"  Model prob: {r['model_prob']:.1%}  |  Kalshi price: {r['kalshi_price']:.2f} "
               f"(implied {r['implied_prob']:.1%})  |  Edge: {r['edge_pp']:+.1f}pp")
         print(f"  Bet size: ${r['bet_size']:.2f}  |  Expected profit: ${r['expected_profit']:.2f}  "
               f"|  Breakeven win rate: {r['breakeven_win_rate']:.1%}  |  Volume: ${r['volume']:.0f}")
-        if flag:
-            print(f"  *** {flag} ***")
+        if r.get("exposure_note"):
+            print(f"  *** {r['exposure_note']} (was ${r['original_bet_size']:.2f}) ***")
 
     print(f"\nTotal recommended exposure: ${total_exposure:.2f} (cap: ${MAX_TOTAL_EXPOSURE:.0f})")
+
+
+def main():
+    recommendations, skipped, tomorrow_matches = generate_recommendations()
+    print_report(recommendations, skipped, tomorrow_matches)
 
 
 if __name__ == "__main__":

@@ -20,6 +20,10 @@ Data sources:
   well, so this currently fails. See fetch_wta_matches() - it is written to
   work the moment that repo becomes reachable again, and raises a clear
   error in the meantime instead of silently returning bad data.
+
+Decision (2026-07-26): proceed on ATP data only for now rather than block
+the whole project on WTA access. fetch_all_historical_matches() defaults to
+ATP-only; pass include_wta=True to retry WTA once it's reachable again.
 """
 
 import io
@@ -43,10 +47,12 @@ COLUMN_MAP = {
     "surface": "surface",
     "tourney_level": "tourney_level",
     "tourney_date": "tourney_date",
+    "match_num": "match_num",
     "round": "round",
     "best_of": "best_of",
     "score": "score",
     "minutes": "minutes",
+    "winner_id": "winner_id",
     "winner_name": "winner_name",
     "winner_hand": "winner_hand",
     "winner_ht": "winner_ht",
@@ -54,6 +60,7 @@ COLUMN_MAP = {
     "winner_age": "winner_age",
     "winner_rank": "winner_rank",
     "winner_rank_points": "winner_rank_points",
+    "loser_id": "loser_id",
     "loser_name": "loser_name",
     "loser_hand": "loser_hand",
     "loser_ht": "loser_ht",
@@ -177,11 +184,20 @@ def _standardize(df, tour):
     return out
 
 
-def fetch_all_historical_matches(verbose=True):
-    """Fetch and combine ATP + WTA historical matches for the last 10 years."""
+def fetch_all_historical_matches(verbose=True, include_wta=False):
+    """
+    Fetch historical matches for the last 10 years. ATP-only by default -
+    WTA (JeffSackmann/tennis_wta) is currently blocked at the GitHub CDN
+    level for this environment, and the decision (2026-07-26) was to proceed
+    on ATP data alone rather than block on it. Pass include_wta=True to try
+    it again once that access is restored.
+    """
     if verbose:
         print(f"Fetching ATP matches for {YEARS[0]}-{YEARS[-1]}...")
     atp = fetch_atp_matches(verbose=verbose)
+
+    if not include_wta:
+        return atp, None
 
     wta = None
     wta_error = None
@@ -194,11 +210,7 @@ def fetch_all_historical_matches(verbose=True):
         if verbose:
             print(f"  WTA fetch failed: {wta_error}")
 
-    if wta is not None:
-        combined = pd.concat([atp, wta], ignore_index=True)
-    else:
-        combined = atp
-
+    combined = pd.concat([atp, wta], ignore_index=True) if wta is not None else atp
     return combined, wta_error
 
 

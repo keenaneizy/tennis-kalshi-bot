@@ -27,12 +27,16 @@ COLUMNS = [
     "recommended_bet_size", "actual_bet_placed",
     "match_result_winner", "prediction_correct", "profit_or_loss",
     "running_bankroll", "running_roi", "brier_score_that_day",
+    "pre_match_alert_sent",
 ]
 
 
 def _load_or_init():
     if os.path.exists(TRADES_CSV_PATH):
-        return pd.read_csv(TRADES_CSV_PATH)
+        df = pd.read_csv(TRADES_CSV_PATH)
+        if "pre_match_alert_sent" not in df.columns:
+            df["pre_match_alert_sent"] = False
+        return df
     # dtype=object so an all-empty column (e.g. match_result_winner before any
     # match resolves) doesn't get inferred as float64 and then reject a
     # string being written into it later.
@@ -56,6 +60,7 @@ def append_evening_recommendations(recommendations, tomorrow_date):
             "recommended_bet_size": r["bet_size"], "actual_bet_placed": np.nan,
             "match_result_winner": np.nan, "prediction_correct": np.nan, "profit_or_loss": np.nan,
             "running_bankroll": np.nan, "running_roi": np.nan, "brier_score_that_day": np.nan,
+            "pre_match_alert_sent": False,
         })
     if not new_rows:
         return df

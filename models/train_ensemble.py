@@ -336,6 +336,8 @@ def main():
     with open(f"{ARTIFACT_DIR}/eval_metrics.json", "w") as f:
         json.dump({"accuracy": acc, "brier": brier, "log_loss": ll, "auc": auc,
                     "val_briers": val_briers, "weights": weights}, f, indent=2)
+    with open(f"{ARTIFACT_DIR}/top_features.json", "w") as f:
+        json.dump(top_features_tree(models["xgboost"], feature_names, n=5), f, indent=2)
 
     print(f"\nSaved all models/artifacts to {ARTIFACT_DIR}/")
 

@@ -154,3 +154,60 @@ def format_daily_summary(summary):
         f"Tomorrow's early morning games: {summary['tomorrow_early_morning_count']} matches flagged "
         f"— watch for 10pm picks tonight",
     ])
+
+
+def format_weekly_retrain_message(stats):
+    lines = [
+        f"🎾 TENNIS MODEL UPDATE — {datetime.now():%B %d, %Y}",
+        "Weekly retraining complete",
+        f"Brier score: {stats['brier_old']:.4f} → {stats['brier_new']:.4f}",
+        f"Last 7 days accuracy: {stats['acc_7d']:.1%}" if stats["acc_7d"] == stats["acc_7d"] else "Last 7 days accuracy: n/a (not enough settled picks yet)",
+        f"Last 30 days accuracy: {stats['acc_30d']:.1%}" if stats["acc_30d"] == stats["acc_30d"] else "Last 30 days accuracy: n/a (not enough settled picks yet)",
+        f"Early morning match accuracy: {stats['early_morning_acc']:.1%} — tracking separately"
+        if stats["early_morning_acc"] == stats["early_morning_acc"] else "Early morning match accuracy: n/a yet",
+    ]
+    if stats.get("best_surface"):
+        lines.append(f"Best performing surface: {stats['best_surface'][0]} at {stats['best_surface'][1]:.1%}")
+    if stats.get("worst_surface"):
+        lines.append(f"Worst performing surface: {stats['worst_surface'][0]} at {stats['worst_surface'][1]:.1%}")
+    lines.append("Top 5 most predictive features this week:")
+    for name, importance in stats["top_features"]:
+        lines.append(f"  {name}: {importance:.4f}")
+    if stats.get("systematic_error_flags"):
+        lines.append("")
+        lines.append("⚠️ Possible systematic errors:")
+        for flag in stats["systematic_error_flags"]:
+            lines.append(f"  {flag}")
+    return "\n".join(lines)
+
+
+def format_monthly_report(stats):
+    lines = [f"🎾 TENNIS MONTHLY REPORT — {datetime.now():%B %Y}", ""]
+
+    lines.append("Accuracy by surface:")
+    for surface, s in stats["by_surface"].items():
+        lines.append(f"  {surface}: {s['accuracy']:.1%} ({s['n']} picks)")
+
+    lines.append("\nAccuracy by tournament tier:")
+    for tier, s in stats["by_tier"].items():
+        lines.append(f"  {tier}: {s['accuracy']:.1%} ({s['n']} picks)")
+
+    lines.append("\nAccuracy — favorites vs underdogs:")
+    for is_fav, s in stats["favorites_vs_underdogs"].items():
+        label = "Favorites" if is_fav else "Underdogs"
+        lines.append(f"  {label}: {s['accuracy']:.1%} ({s['n']} picks)")
+
+    lines.append("\nAccuracy — early morning vs normal hours:")
+    for is_early, s in stats["early_vs_normal"].items():
+        label = "Early morning" if is_early else "Normal hours"
+        lines.append(f"  {label}: {s['accuracy']:.1%} ({s['n']} picks)")
+
+    lines.append("\nROI — HIGH CONVICTION vs STANDARD:")
+    for tier, s in stats["roi_by_tier"].items():
+        lines.append(f"  {tier}: {s['roi']:+.1%} ROI ({s['n']} picks)")
+
+    lines.append("\nAverage edge — winning vs losing picks:")
+    lines.append(f"  Winning picks: +{stats['avg_edge']['winning']:.1f}pp")
+    lines.append(f"  Losing picks: +{stats['avg_edge']['losing']:.1f}pp")
+
+    return "\n".join(lines)

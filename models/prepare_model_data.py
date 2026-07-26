@@ -39,7 +39,11 @@ def load_features(path="data/processed_features.csv"):
 
 
 def encode_features(df):
-    """Return (X, y, meta) with all-numeric X, ready for modeling."""
+    """
+    Return (X, y, meta) with all-numeric X, ready for modeling. Works for
+    both training (target column present) and live inference (no target
+    yet) - y is None in the latter case.
+    """
     df = df.copy()
 
     df["round_ordinal"] = df["round"].map(ROUND_ORDER)
@@ -58,11 +62,22 @@ def encode_features(df):
         "surface", "tourney_level", "round", "indoor",
         "p1_x_surf_trend_label", "p2_x_surf_trend_label", TARGET_COL,
     ]
-    numeric = df.drop(columns=drop_cols)
+    numeric = df.drop(columns=[c for c in drop_cols if c in df.columns])
     X = pd.concat([numeric, surface_dummies, level_dummies], axis=1)
-    y = df[TARGET_COL].astype(int)
-    meta = df[META_COLS]
+    y = df[TARGET_COL].astype(int) if TARGET_COL in df.columns else None
+    meta = df[[c for c in META_COLS if c in df.columns]]
     return X, y, meta
+
+
+def align_to_training_columns(X, feature_names):
+    """
+    Reindex a live-inference feature row to the exact column set/order the
+    models were trained on. Only affects one-hot surface/level columns that
+    a single upcoming match won't produce on its own (e.g. a Clay match has
+    no 'surface_Grass' column until reindexed in as 0) - genuinely-missing
+    numeric features (e.g. no head-to-head history yet) stay NaN.
+    """
+    return X.reindex(columns=feature_names, fill_value=0.0)
 
 
 def time_based_split(X, y, meta, train_frac=0.68, val_frac=0.12):

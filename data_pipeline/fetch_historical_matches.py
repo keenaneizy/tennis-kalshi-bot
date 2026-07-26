@@ -118,6 +118,74 @@ def fetch_atp_matches(years=YEARS, verbose=True):
     return _standardize(combined, tour="ATP")
 
 
+TML_API_BASE = "https://stats.tennismylife.org/api/matches"
+
+
+def fetch_recent_atp_results(min_date, verbose=True):
+    """
+    Fill the recency gap in the GitHub CSV mirror using Tennismylife's own
+    live website API (stats.tennismylife.org), which is updated same-day -
+    unlike the GitHub repo, which its own README says is "kept only for
+    historical reference" now that the live database lives on the website.
+
+    This feed only has winner/loser/score/round/surface/tourney - no serve
+    stats (aces, first-serve%, etc.) and no rankings. That's fine: it keeps
+    win/loss record, Elo, and head-to-head current (the features that decay
+    fastest without fresh data), while serve-stat rolling averages just
+    naturally fall back to the most recent match that HAS stats, via the
+    NaN-safe aggregation in feature_engineering.py. Player IDs are confirmed
+    identical between the two sources, so they merge cleanly.
+    """
+    year = min_date.year
+    frames = []
+    offset = 0
+    while True:
+        resp = None
+        last_error = None
+        for attempt in range(3):
+            try:
+                resp = requests.get(TML_API_BASE, params={"year": year, "limit": 500, "offset": offset}, timeout=30)
+                resp.raise_for_status()
+                break
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                resp = None
+                time.sleep(2 * (attempt + 1))
+        if resp is None:
+            raise RuntimeError(f"Failed to fetch {TML_API_BASE} at offset {offset}: {last_error}")
+        payload = resp.json()
+        results = payload.get("results", [])
+        if not results:
+            break
+        frames.append(pd.DataFrame(results))
+        offset += len(results)
+        if offset >= payload.get("count", 0):
+            break
+    if not frames:
+        return pd.DataFrame()
+
+    df = pd.concat(frames, ignore_index=True)
+    df = df[df["status"] == True]  # noqa: E712 - only completed matches
+    df["tourney_date_parsed"] = pd.to_datetime(df["tourney_date"]).dt.tz_localize(None)
+    df = df[df["tourney_date_parsed"] > min_date]
+    if df.empty:
+        return df
+    if verbose:
+        print(f"  live results supplement: {len(df)} completed matches after {min_date.date()}")
+
+    df["tourney_date"] = df["tourney_date_parsed"].dt.strftime("%Y%m%d").astype(int)
+    df["tourney_id"] = df["tourney_name"] + "-" + df["tourney_date"].astype(str)
+    df["match_num"] = df["id"]
+    df["best_of"] = df["tourney_level"].map(lambda lvl: 5 if lvl == "G" else 3)
+    for col in ["w_ace", "w_df", "w_svpt", "w_1stIn", "w_1stWon", "w_2ndWon", "w_SvGms", "w_bpSaved", "w_bpFaced",
+                "l_ace", "l_df", "l_svpt", "l_1stIn", "l_1stWon", "l_2ndWon", "l_SvGms", "l_bpSaved", "l_bpFaced",
+                "winner_rank", "winner_rank_points", "loser_rank", "loser_rank_points",
+                "winner_hand", "winner_ht", "winner_age", "loser_hand", "loser_ht", "loser_age", "minutes", "indoor"]:
+        df[col] = pd.NA
+    df["tour"] = "ATP"
+    return _standardize(df, tour="ATP")
+
+
 def fetch_wta_matches(years=YEARS, verbose=True):
     """
     Pull WTA match history from JeffSackmann/tennis_wta.
@@ -184,17 +252,45 @@ def _standardize(df, tour):
     return out
 
 
-def fetch_all_historical_matches(verbose=True, include_wta=False):
+def fetch_all_historical_matches(verbose=True, include_wta=False, include_recent_supplement=True):
     """
     Fetch historical matches for the last 10 years. ATP-only by default -
     WTA (JeffSackmann/tennis_wta) is currently blocked at the GitHub CDN
     level for this environment, and the decision (2026-07-26) was to proceed
     on ATP data alone rather than block on it. Pass include_wta=True to try
     it again once that access is restored.
+
+    The GitHub CSV mirror (Tennismylife/TML-Database) turned out to be
+    frozen partway through the current year (discovered 2026-07-26: its
+    2026.csv stops in mid-January, six-plus months stale) - its own README
+    says the repo is kept for "historical reference" only now, with the
+    live database moved to their website. include_recent_supplement=True
+    (the default) fills that gap with fetch_recent_atp_results(), which
+    hits that website's own API for anything newer than the CSV's last date.
     """
     if verbose:
         print(f"Fetching ATP matches for {YEARS[0]}-{YEARS[-1]}...")
     atp = fetch_atp_matches(verbose=verbose)
+
+    if include_recent_supplement:
+        max_date = pd.to_datetime(atp["tourney_date"], format="%Y%m%d").max()
+        if verbose:
+            print(f"  CSV mirror's most recent match: {max_date.date()} - checking for a live-results gap...")
+        try:
+            supplement = fetch_recent_atp_results(max_date, verbose=verbose)
+            if not supplement.empty:
+                # backfill indoor/outdoor from the CSV's historical mode for that tournament, when known
+                indoor_by_tourney = atp.dropna(subset=["indoor"]).groupby("tourney_name")["indoor"].agg(
+                    lambda s: s.mode().iloc[0] if not s.mode().empty else pd.NA
+                )
+                supplement["indoor"] = supplement.apply(
+                    lambda r: indoor_by_tourney.get(r["tourney_name"], pd.NA) if pd.isna(r["indoor"]) else r["indoor"],
+                    axis=1,
+                )
+                atp = pd.concat([atp, supplement], ignore_index=True)
+        except Exception as exc:  # noqa: BLE001
+            if verbose:
+                print(f"  live-results supplement failed (non-fatal, continuing without it): {exc}")
 
     if not include_wta:
         return atp, None

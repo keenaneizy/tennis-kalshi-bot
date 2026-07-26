@@ -72,6 +72,11 @@ def safe_pct(numerator, denominator):
     return numerator / denominator
 
 
+def to_num(v):
+    """pd.NA (from the live-results supplement, which has no ranking/age data) -> a real np.nan."""
+    return np.nan if pd.isna(v) else float(v)
+
+
 # ---------------------------------------------------------------------------
 # Per-player chronological state
 # ---------------------------------------------------------------------------
@@ -117,10 +122,11 @@ class PlayerState:
             exp_surface = 1.0 / (1.0 + 10 ** ((opponent_elo_surface - self.elo_surface[surface]) / 400.0))
             self.elo_surface[surface] = self.elo_surface[surface] + ELO_K * (actual - exp_surface)
 
-        self.rank_history.append((match_entry["date"], match_entry["rank"]))
-        if match_entry["rank"] is not None and not (isinstance(match_entry["rank"], float) and np.isnan(match_entry["rank"])):
-            if self.peak_rank is None or match_entry["rank"] < self.peak_rank:
-                self.peak_rank = match_entry["rank"]
+        match_rank = match_entry["rank"]
+        match_rank = np.nan if pd.isna(match_rank) else float(match_rank)
+        self.rank_history.append((match_entry["date"], match_rank))
+        if pd.notna(match_rank) and (self.peak_rank is None or match_rank < self.peak_rank):
+            self.peak_rank = match_rank
 
         self.name = match_entry["name"]
         self.ioc = match_entry["ioc"]
@@ -163,16 +169,19 @@ def surface_performance_features(state, surface, current_date, prefix):
     feats[f"{prefix}_surf_win_pct_12m"] = _win_pct(state.recent(surface=surface, since_date=since_12m))
     feats[f"{prefix}_surf_win_pct_24m"] = _win_pct(state.recent(surface=surface, since_date=since_24m))
 
+    # NaN-safe sums: matches from the live-results supplement (no serve
+    # stats) simply don't contribute to these aggregates instead of being
+    # miscounted as "0 aces" etc.
     last20 = state.recent(n=20, surface=surface)
     if last20:
         feats[f"{prefix}_surf_ace_rate_l20"] = safe_pct(
-            sum(m["own"]["ace"] for m in last20), sum(m["own"]["svpt"] for m in last20)
+            np.nansum([m["own"]["ace"] for m in last20]), np.nansum([m["own"]["svpt"] for m in last20])
         )
         feats[f"{prefix}_surf_1stIn_pct_l20"] = safe_pct(
-            sum(m["own"]["firstIn"] for m in last20), sum(m["own"]["svpt"] for m in last20)
+            np.nansum([m["own"]["firstIn"] for m in last20]), np.nansum([m["own"]["svpt"] for m in last20])
         )
-        bp_conv_opp = sum(m["opp"]["bpFaced"] - m["opp"]["bpSaved"] for m in last20)
-        bp_opp_total = sum(m["opp"]["bpFaced"] for m in last20)
+        bp_conv_opp = np.nansum([m["opp"]["bpFaced"] - m["opp"]["bpSaved"] for m in last20])
+        bp_opp_total = np.nansum([m["opp"]["bpFaced"] for m in last20])
         feats[f"{prefix}_surf_bp_converted_l20"] = safe_pct(bp_conv_opp, bp_opp_total)
     else:
         feats[f"{prefix}_surf_ace_rate_l20"] = np.nan
@@ -309,27 +318,30 @@ def serve_return_features(state, surface, prefix):
             feats[f"{prefix}_{name}_l20surf"] = np.nan
         return feats
 
-    svpt = sum(m["own"]["svpt"] for m in last20)
-    firstIn = sum(m["own"]["firstIn"] for m in last20)
-    firstWon = sum(m["own"]["firstWon"] for m in last20)
-    secondWon = sum(m["own"]["secondWon"] for m in last20)
-    ace = sum(m["own"]["ace"] for m in last20)
-    df = sum(m["own"]["df"] for m in last20)
-    bpSaved = sum(m["own"]["bpSaved"] for m in last20)
-    bpFaced = sum(m["own"]["bpFaced"] for m in last20)
+    # NaN-safe: matches from the live-results supplement have no serve
+    # stats and simply don't contribute here (rather than counting as 0).
+    svpt = np.nansum([m["own"]["svpt"] for m in last20])
+    firstIn = np.nansum([m["own"]["firstIn"] for m in last20])
+    firstWon = np.nansum([m["own"]["firstWon"] for m in last20])
+    secondWon = np.nansum([m["own"]["secondWon"] for m in last20])
+    ace = np.nansum([m["own"]["ace"] for m in last20])
+    df = np.nansum([m["own"]["df"] for m in last20])
+    bpSaved = np.nansum([m["own"]["bpSaved"] for m in last20])
+    bpFaced = np.nansum([m["own"]["bpFaced"] for m in last20])
+    matches_with_stats = sum(1 for m in last20 if pd.notna(m["own"]["svpt"]))
 
-    opp_svpt = sum(m["opp"]["svpt"] for m in last20)
-    opp_firstIn = sum(m["opp"]["firstIn"] for m in last20)
-    opp_firstWon = sum(m["opp"]["firstWon"] for m in last20)
-    opp_secondWon = sum(m["opp"]["secondWon"] for m in last20)
-    opp_bpFaced = sum(m["opp"]["bpFaced"] for m in last20)
-    opp_bpSaved = sum(m["opp"]["bpSaved"] for m in last20)
+    opp_svpt = np.nansum([m["opp"]["svpt"] for m in last20])
+    opp_firstIn = np.nansum([m["opp"]["firstIn"] for m in last20])
+    opp_firstWon = np.nansum([m["opp"]["firstWon"] for m in last20])
+    opp_secondWon = np.nansum([m["opp"]["secondWon"] for m in last20])
+    opp_bpFaced = np.nansum([m["opp"]["bpFaced"] for m in last20])
+    opp_bpSaved = np.nansum([m["opp"]["bpSaved"] for m in last20])
 
     feats[f"{prefix}_1st_serve_pct_l20surf"] = safe_pct(firstIn, svpt)
     feats[f"{prefix}_1st_serve_won_pct_l20surf"] = safe_pct(firstWon, firstIn)
     feats[f"{prefix}_2nd_serve_won_pct_l20surf"] = safe_pct(secondWon, svpt - firstIn)
-    feats[f"{prefix}_aces_per_match_l20surf"] = ace / len(last20)
-    feats[f"{prefix}_dfs_per_match_l20surf"] = df / len(last20)
+    feats[f"{prefix}_aces_per_match_l20surf"] = safe_pct(ace, matches_with_stats)
+    feats[f"{prefix}_dfs_per_match_l20surf"] = safe_pct(df, matches_with_stats)
     feats[f"{prefix}_bp_saved_pct_l20surf"] = safe_pct(bpSaved, bpFaced)
 
     opp_second_serve_pts = opp_svpt - opp_firstIn
@@ -429,9 +441,14 @@ def build_training_features(matches_df, verbose=True, seed=42):
             "firstIn": row["l_1stIn"], "firstWon": row["l_1stWon"], "secondWon": row["l_2ndWon"],
             "bpSaved": row["l_bpSaved"], "bpFaced": row["l_bpFaced"],
         }
-        # replace NaNs with 0 for arithmetic (missing serve stats are rare but present pre-~2000s; harmless for our 2017+ window)
-        w_stats = {k: (0 if pd.isna(v) else v) for k, v in w_stats.items()}
-        l_stats = {k: (0 if pd.isna(v) else v) for k, v in l_stats.items()}
+        # Keep missing serve stats as real NaN (not 0) - matches from the
+        # live-results supplement have none, and coercing to 0 would make a
+        # "no data" match look like a match with zero aces / zero first
+        # serves in, silently dragging down rolling serve-stat averages.
+        # The aggregation functions above use np.nansum specifically so
+        # these matches just don't contribute rather than count as zeros.
+        w_stats = {k: (np.nan if pd.isna(v) else v) for k, v in w_stats.items()}
+        l_stats = {k: (np.nan if pd.isna(v) else v) for k, v in l_stats.items()}
 
         # ---- compute features for BOTH players using state as of BEFORE this match ----
         winner_feats = {}
@@ -440,7 +457,7 @@ def build_training_features(matches_df, verbose=True, seed=42):
         winner_feats.update(ranking_features(w_state, current_date, "x"))
         winner_feats.update(tournament_context_features(w_state, tourney_name, tourney_level, indoor, current_date, "x"))
         winner_feats.update(serve_return_features(w_state, surface, "x"))
-        winner_feats.update(physical_scheduling_features(w_state, row["winner_age"], current_date, tourney_name, "x"))
+        winner_feats.update(physical_scheduling_features(w_state, to_num(row["winner_age"]), current_date, tourney_name, "x"))
 
         loser_feats = {}
         loser_feats.update(surface_performance_features(l_state, surface, current_date, "x"))
@@ -448,7 +465,7 @@ def build_training_features(matches_df, verbose=True, seed=42):
         loser_feats.update(ranking_features(l_state, current_date, "x"))
         loser_feats.update(tournament_context_features(l_state, tourney_name, tourney_level, indoor, current_date, "x"))
         loser_feats.update(serve_return_features(l_state, surface, "x"))
-        loser_feats.update(physical_scheduling_features(l_state, row["loser_age"], current_date, tourney_name, "x"))
+        loser_feats.update(physical_scheduling_features(l_state, to_num(row["loser_age"]), current_date, tourney_name, "x"))
 
         h2h_key = get_h2h_key(winner_id, loser_id)
         h2h_list = h2h.get(h2h_key, [])
@@ -491,7 +508,7 @@ def build_training_features(matches_df, verbose=True, seed=42):
             "date": current_date, "surface": surface, "tourney_level": tourney_level,
             "tourney_name": tourney_name, "tourney_id": row["tourney_id"], "indoor": indoor,
             "round": row["round"], "won": True, "opponent_id": loser_id,
-            "rank": row["winner_rank"], "rank_points": row["winner_rank_points"],
+            "rank": to_num(row["winner_rank"]), "rank_points": to_num(row["winner_rank_points"]),
             "own": w_stats, "opp": l_stats,
             "sets_won": w_sets_won, "sets_played": sets_played, "games_won": w_games, "games_played": w_games + l_games,
             "tiebreaks_played": tb_total, "tiebreaks_won": tb_won_by_winner,
@@ -503,7 +520,7 @@ def build_training_features(matches_df, verbose=True, seed=42):
             "date": current_date, "surface": surface, "tourney_level": tourney_level,
             "tourney_name": tourney_name, "tourney_id": row["tourney_id"], "indoor": indoor,
             "round": row["round"], "won": False, "opponent_id": winner_id,
-            "rank": row["loser_rank"], "rank_points": row["loser_rank_points"],
+            "rank": to_num(row["loser_rank"]), "rank_points": to_num(row["loser_rank_points"]),
             "own": l_stats, "opp": w_stats,
             "sets_won": l_sets_won, "sets_played": sets_played, "games_won": l_games, "games_played": w_games + l_games,
             "tiebreaks_played": tb_total, "tiebreaks_won": tb_total - tb_won_by_winner,
@@ -522,7 +539,7 @@ def build_training_features(matches_df, verbose=True, seed=42):
         h2h[h2h_key] = h2h_list
 
     result = pd.DataFrame(rows)
-    return result
+    return result, players, h2h
 
 
 if __name__ == "__main__":
@@ -531,7 +548,7 @@ if __name__ == "__main__":
     print(f"  {len(matches):,} matches loaded")
 
     print("Building training features (chronological, no leakage)...")
-    features = build_training_features(matches)
+    features, _players, _h2h = build_training_features(matches)
     print(f"\nBuilt {len(features):,} training rows with {features.shape[1]} columns")
 
     out_path = "data/processed_features.csv"

@@ -44,8 +44,20 @@ def _load_or_init():
 
 
 def append_evening_recommendations(recommendations, tomorrow_date):
-    """Called right after the 10pm message is sent - logs every recommendation as a new row."""
+    """
+    Called right after the 10pm message is sent - logs every recommendation
+    as a new row. If this match already has an unresolved row (e.g. the
+    evening job ran more than once before the match happened - a manual
+    test earlier the same day, a retry, etc.), that stale row is replaced
+    rather than duplicated, so trades.csv always reflects the most recent
+    snapshot per match rather than accumulating superseded copies.
+    """
     df = _load_or_init()
+    new_tickers = {r.get("event_ticker") for r in recommendations if r.get("event_ticker")}
+    if new_tickers:
+        stale = df["event_ticker"].isin(new_tickers) & df["match_result_winner"].isna()
+        df = df[~stale]
+
     new_rows = []
     for r in recommendations:
         new_rows.append({

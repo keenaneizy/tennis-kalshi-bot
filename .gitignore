@@ -5,3 +5,4 @@ data/raw/*.csv
 data/cache/*
 .env
 data/processed_features.csv
+models/artifacts/

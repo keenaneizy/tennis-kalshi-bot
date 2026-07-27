@@ -211,3 +211,55 @@ def format_monthly_report(stats):
     lines.append(f"  Losing picks: +{stats['avg_edge']['losing']:.1f}pp")
 
     return "\n".join(lines)
+
+
+def _price_str(price):
+    return f"{price*100:.0f}¢" if price is not None else "no market"
+
+
+def _edge_str(edge_pp):
+    return f"{edge_pp:+.1f}pp" if edge_pp is not None else "n/a"
+
+
+def format_match_preview_message(all_analysis, target_date, flagged_matchups=None):
+    """
+    Message sent 9pm CT, an hour before the evening picks message - every
+    match the model analyzed for tomorrow, with each player's model
+    probability, Kalshi price, and edge, not just the ones that clear the
+    betting thresholds. flagged_matchups (a set of "P1 vs P2" strings) marks
+    which of these will also appear in the 10pm picks message.
+    """
+    flagged_matchups = flagged_matchups or set()
+    header = f"🎾 TENNIS MATCH PREVIEW — {target_date:%B %d, %Y}"
+    lines = [header, "Full board of everything the model looked at for tomorrow - the 10pm message will only flag the ones worth betting.", ""]
+
+    analyzed = [a for a in all_analysis if a["analyzed"]]
+    not_analyzed = [a for a in all_analysis if not a["analyzed"]]
+
+    if not analyzed and not not_analyzed:
+        lines.append("No ATP matches found on Kalshi for tomorrow yet.")
+        return "\n".join(lines)
+
+    analyzed.sort(key=lambda a: a["start_time_ct"])
+    for a in analyzed:
+        star = " ⭐" if a["matchup"] in flagged_matchups else ""
+        lines.append(f"{a['matchup']} ({a['tournament']} {a['round']}) — {a['start_time_ct'].split(' ', 1)[1]}{star}")
+        lines.append(
+            f"  {a['player_1']}: model {a['player_1_model_prob']:.0%} | "
+            f"Kalshi {_price_str(a['player_1_kalshi_price'])} | edge {_edge_str(a['player_1_edge_pp'])}"
+        )
+        lines.append(
+            f"  {a['player_2']}: model {a['player_2_model_prob']:.0%} | "
+            f"Kalshi {_price_str(a['player_2_kalshi_price'])} | edge {_edge_str(a['player_2_edge_pp'])}"
+        )
+        lines.append(f"  Volume: ${a['volume']:,.0f}")
+        lines.append("")
+
+    if not_analyzed:
+        lines.append("Not analyzed (no reliable data to predict from):")
+        for a in not_analyzed:
+            lines.append(f"  {a['matchup']} — {a['start_time_ct'].split(' ', 1)[1]}: {a['reason']}")
+        lines.append("")
+
+    lines.append(f"{len(analyzed)} match(es) analyzed, {len(flagged_matchups)} will be flagged as opportunities at 10pm.")
+    return "\n".join(lines)

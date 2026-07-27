@@ -254,8 +254,11 @@ def apply_exposure_cap(recommendations, max_total=MAX_TOTAL_EXPOSURE):
 def generate_recommendations(verbose=True):
     """
     Runs the full Step 4 pipeline and returns (recommendations, skipped,
-    tomorrow_matches) without printing - the reusable entry point for
-    Telegram alerts (Step 5) and the trade tracker (Step 6).
+    tomorrow_matches, all_analysis) without printing - the reusable entry
+    point for Telegram alerts (Step 5) and the trade tracker (Step 6).
+    all_analysis has one entry per Kalshi match (analyzed or not, flagged
+    or not) with model probability/price/edge for both players - used by
+    the 9pm full-board preview message.
     """
     if verbose:
         print("Loading historical ATP matches and rebuilding current player state...")
@@ -283,22 +286,38 @@ def generate_recommendations(verbose=True):
 
     recommendations = []
     skipped = []
+    all_analysis = []  # one entry per Kalshi match, whether or not it was analyzable/flagged
 
     for m in tomorrow_matches:
         p1_name, p2_name = m["player_1"], m["player_2"]
         p1_id, p1_match_type = match_player(p1_name, name_lookup)
         p2_id, p2_match_type = match_player(p2_name, name_lookup)
         if p1_id is None or p2_id is None:
-            skipped.append((m["matchup"], "could not match player name(s) to historical data"))
+            reason = "could not match player name(s) to historical data"
+            skipped.append((m["matchup"], reason))
+            all_analysis.append({
+                "matchup": m["matchup"], "start_time_ct": m["start_time_ct"],
+                "start_hour_ct": m["start_hour_ct"], "analyzed": False, "reason": reason,
+            })
             continue
 
         competition, round_code = parse_competition_from_rules(m.get("rules_primary"))
         if competition is None:
-            skipped.append((m["matchup"], "could not parse tournament name from Kalshi market"))
+            reason = "could not parse tournament name from Kalshi market"
+            skipped.append((m["matchup"], reason))
+            all_analysis.append({
+                "matchup": m["matchup"], "start_time_ct": m["start_time_ct"],
+                "start_hour_ct": m["start_hour_ct"], "analyzed": False, "reason": reason,
+            })
             continue
         tourney_name = resolve_tournament(competition, historical_tourney_names)
         if tourney_name is None:
-            skipped.append((m["matchup"], f"unknown tournament '{competition}' - no surface/level data"))
+            reason = f"unknown tournament '{competition}' - no surface/level data"
+            skipped.append((m["matchup"], reason))
+            all_analysis.append({
+                "matchup": m["matchup"], "start_time_ct": m["start_time_ct"],
+                "start_hour_ct": m["start_hour_ct"], "analyzed": False, "reason": reason,
+            })
             continue
 
         recent_rows = matches[matches["tourney_name"] == tourney_name].sort_values("tourney_date")
@@ -334,6 +353,24 @@ def generate_recommendations(verbose=True):
         X_row, _, _ = encode_features(pd.DataFrame([row]))
         X_row = align_to_training_columns(X_row, feature_names)
         model_prob_p1, per_model = predict_win_probability(models, preprocessing, calibrator, weights, X_row)
+
+        # Full-board entry for the 9pm preview message - every match that got
+        # this far has a real model probability, regardless of whether it
+        # ends up qualifying for a bet recommendation below.
+        p1_price = float(m["player_1_yes_ask"]) if m["player_1_yes_ask"] is not None else None
+        p2_price = float(m["player_2_yes_ask"]) if m["player_2_yes_ask"] is not None else None
+        all_analysis.append({
+            "matchup": m["matchup"], "tournament": tourney_name, "round": round_code,
+            "start_time_ct": m["start_time_ct"], "start_hour_ct": m["start_hour_ct"],
+            "analyzed": True,
+            "player_1": p1_name, "player_1_model_prob": round(model_prob_p1, 4),
+            "player_1_kalshi_price": p1_price,
+            "player_1_edge_pp": round((model_prob_p1 - p1_price) * 100, 2) if p1_price is not None else None,
+            "player_2": p2_name, "player_2_model_prob": round(1 - model_prob_p1, 4),
+            "player_2_kalshi_price": p2_price,
+            "player_2_edge_pp": round((1 - model_prob_p1 - p2_price) * 100, 2) if p2_price is not None else None,
+            "volume": float(m["player_1_volume"] or 0),
+        })
 
         # ranking-difference / thin-h2h skip rule
         rank_diff_abs = abs(rank_diff) if pd.notna(rank_diff) else 0
@@ -382,7 +419,7 @@ def generate_recommendations(verbose=True):
             recommendations.append(max(candidates, key=lambda c: c["edge_pp"]))
 
     recommendations = apply_exposure_cap(recommendations)
-    return recommendations, skipped, tomorrow_matches
+    return recommendations, skipped, tomorrow_matches, all_analysis
 
 
 def print_report(recommendations, skipped, tomorrow_matches):
@@ -409,7 +446,7 @@ def print_report(recommendations, skipped, tomorrow_matches):
 
 
 def main():
-    recommendations, skipped, tomorrow_matches = generate_recommendations()
+    recommendations, skipped, tomorrow_matches, all_analysis = generate_recommendations()
     print_report(recommendations, skipped, tomorrow_matches)
 
 

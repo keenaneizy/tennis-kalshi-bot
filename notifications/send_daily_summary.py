@@ -46,7 +46,7 @@ def main():
             yesterday_brier = yesterday["brier_score_that_day"].dropna().iloc[-1]
 
     print("Checking tomorrow's early-morning count...")
-    tomorrow_recs, _, _ = generate_recommendations(verbose=False)
+    tomorrow_recs, _, _, _ = generate_recommendations(verbose=False)
     tomorrow_early_count = sum(1 for r in tomorrow_recs if r["start_hour_ct"] is not None and r["start_hour_ct"] < 8)
 
     summary = {

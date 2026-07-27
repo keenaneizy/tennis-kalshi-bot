@@ -15,15 +15,16 @@ evaluated; there's no trained WTA model and none is planned.
 
 ## The one thing to know: it's already scheduled and running
 
-You don't need to run anything manually. 8 Routines are live in this
+You don't need to run anything manually. 9 Routines are live in this
 environment and will keep firing on their own:
 
 | Routine | When (Central Time) | What it does |
 |---|---|---|
+| Tennis - 9pm match preview (full board) | 9:00pm daily | Every ATP match analyzed for tomorrow - model %, Kalshi price, edge for both players, not just the flagged ones |
+| Tennis - 9pm daily summary | 9:00pm daily | Today's/running record, P&L, bankroll, Brier trend |
 | Tennis - 10pm evening picks (CRITICAL) | 10:00pm daily | The main picks message - the whole reason this project exists |
 | Tennis - 8am morning update | 8:00am daily | Refreshes prices for today's post-8am flagged matches |
-| Tennis - hourly pre-match alert and result check | every hour | ~T-70min match reminders + result settlement (see "hourly limit" below) |
-| Tennis - 9pm daily summary | 9:00pm daily | Today's/running record, P&L, bankroll, Brier trend |
+| Tennis - hourly pre-match alert and result check | every hour | ~T-70min match reminders + result settlement + a safety-net retry of the 10pm job if it didn't confirm sending (see "hourly limit" below) |
 | Tennis - Sunday 3am full retrain | Sunday 3:00am | Re-pulls data, retrains all 4 models, sends a model-update message |
 | Tennis - monthly report | 1st of month, 8:00am | Accuracy/ROI breakdowns by surface/tier/favorite-underdog/etc |
 | Tennis - DST reminder (fall back) | one-shot, Oct 27 2026 | Shifts all the above 1hr for the Nov 1 DST change |
@@ -87,6 +88,12 @@ Two disclosed platform tradeoffs, not silent ones:
 - `notifications/format_messages.py` + one `send_*.py` script per message
   type (evening picks, morning update, pre-match alert, result update,
   daily summary), matching the spec's exact message formats.
+- `notifications/send_match_preview.py` - added per user request
+  (2026-07-27): a 9pm CT message, an hour before evening picks, listing
+  *every* ATP match analyzed for tomorrow with each player's model
+  probability, Kalshi price, and edge - not just the ones that clear the
+  betting thresholds. Flagged opportunities are starred (⭐) since they'll
+  also appear in the 10pm message.
 
 **Step 6 - trade tracker**
 - `trades/trade_tracker.py` - `data/trades.csv`, one row per recommendation,

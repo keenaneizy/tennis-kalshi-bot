@@ -33,7 +33,7 @@ def load_eval_metrics():
 
 def main():
     print("Generating tomorrow's recommendations...")
-    recommendations, skipped, tomorrow_matches = generate_recommendations(verbose=True)
+    recommendations, skipped, tomorrow_matches, all_analysis = generate_recommendations(verbose=True)
     eval_metrics = load_eval_metrics()
 
     tomorrow_date = datetime.now(CENTRAL).date() + timedelta(days=1)

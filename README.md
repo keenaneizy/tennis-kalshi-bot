@@ -7,7 +7,11 @@ committed).
 
 ## Status: all 8 steps built and running on a live schedule
 
-By decision (2026-07-26): **ATP only for now** - see "Known gaps" below.
+By decision (2026-07-27): **ATP only, permanently.** WTA results are
+considered too volatile/harder to predict reliably to be worth chasing -
+this isn't a "pending until data access clears" gap, it's a deliberate
+scope decision. WTA *markets* are visible on Kalshi and simply never
+evaluated; there's no trained WTA model and none is planned.
 
 ## The one thing to know: it's already scheduled and running
 
@@ -102,14 +106,17 @@ Two disclosed platform tradeoffs, not silent ones:
 
 ## Known gaps (disclosed, not silently worked around)
 
-- **WTA is not included.** JeffSackmann/tennis_wta (GitHub) returns 404 on
-  every file - verified independently via raw.githubusercontent.com,
-  jsdelivr, and statically.io, most likely GitHub-side throttling of a very
-  heavily-scraped repo. Decision (2026-07-26): proceed ATP-only rather than
-  block the project on it. `fetch_wta_matches()` is fully implemented and
-  will work the moment that access clears. Live WTA *markets* on Kalshi
-  already work fine (KXWTAMATCH) - it's specifically the historical WTA
-  stats that are missing, so there's no trained WTA model yet.
+- **WTA is out of scope, permanently (decision 2026-07-27).** WTA results
+  are considered too volatile to predict reliably enough to be worth it -
+  not a data-access problem to solve, a deliberate call not to build it.
+  (For the record: JeffSackmann/tennis_wta on GitHub was also returning 404
+  on every file when this was evaluated - verified independently via
+  raw.githubusercontent.com, jsdelivr, and statically.io, most likely
+  GitHub-side throttling of a heavily-scraped repo - but that's no longer
+  the operative reason. `fetch_wta_matches()` is left in
+  `data_pipeline/fetch_historical_matches.py` working and unused, in case
+  this decision is ever revisited.) Live WTA *markets* are visible on
+  Kalshi (KXWTAMATCH) and simply never evaluated.
 - **No Challenger/ITF-level results.** Both the GitHub mirror and its
   live-results supplement only cover ATP tour-level matches. Players whose
   recent record is mostly Challenger/ITF (common for early-morning matches

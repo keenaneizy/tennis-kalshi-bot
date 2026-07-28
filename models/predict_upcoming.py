@@ -251,14 +251,18 @@ def apply_exposure_cap(recommendations, max_total=MAX_TOTAL_EXPOSURE):
     return ordered
 
 
-def generate_recommendations(verbose=True):
+def generate_recommendations(verbose=True, target_date=None):
     """
     Runs the full Step 4 pipeline and returns (recommendations, skipped,
-    tomorrow_matches, all_analysis) without printing - the reusable entry
-    point for Telegram alerts (Step 5) and the trade tracker (Step 6).
-    all_analysis has one entry per Kalshi match (analyzed or not, flagged
-    or not) with model probability/price/edge for both players - used by
-    the 9pm full-board preview message.
+    target_date_matches, all_analysis) without printing - the reusable
+    entry point for Telegram alerts (Step 5) and the trade tracker
+    (Step 6). all_analysis has one entry per Kalshi match (analyzed or
+    not, flagged or not) with model probability/price/edge for both
+    players - used by the 9pm full-board preview message.
+
+    target_date defaults to tomorrow (Central Time) - the normal nightly
+    use. Pass an explicit date (e.g. today's date) to analyze a different
+    day's matches, such as checking what's left later tonight.
     """
     if verbose:
         print("Loading historical ATP matches and rebuilding current player state...")
@@ -278,10 +282,11 @@ def generate_recommendations(verbose=True):
     atp_matches = [m for m in kalshi_matches if m["tour"] == "ATP"]
 
     today_ct = datetime.now(CENTRAL).date()
-    tomorrow_ct = today_ct + timedelta(days=1)
-    tomorrow_matches = matches_for_date(atp_matches, tomorrow_ct)
+    if target_date is None:
+        target_date = today_ct + timedelta(days=1)
+    tomorrow_matches = matches_for_date(atp_matches, target_date)
     if verbose:
-        print(f"  {len(tomorrow_matches)} ATP matches on Kalshi tomorrow ({tomorrow_ct})")
+        print(f"  {len(tomorrow_matches)} ATP matches on Kalshi for {target_date}")
         print("  (WTA markets are live on Kalshi but skipped here - no trained WTA model yet)")
 
     recommendations = []

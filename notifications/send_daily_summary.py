@@ -22,6 +22,9 @@ from fetch_kalshi import CENTRAL  # noqa: E402
 from format_messages import format_daily_summary  # noqa: E402
 from telegram_bot import send_telegram_message  # noqa: E402
 from trade_tracker import TRADES_CSV_PATH, compute_model_record, STARTING_BANKROLL  # noqa: E402
+from send_markers import write_sent_marker  # noqa: E402
+
+SENT_MARKER = "data/last_daily_summary_send.txt"
 
 
 def main():
@@ -68,6 +71,8 @@ def main():
     print(message)
     send_telegram_message(message)
     print("\nSent to Telegram.")
+
+    write_sent_marker(SENT_MARKER, today_ct)
 
 
 if __name__ == "__main__":

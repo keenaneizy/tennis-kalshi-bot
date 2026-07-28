@@ -22,6 +22,7 @@ from fetch_kalshi import CENTRAL  # noqa: E402
 from format_messages import format_evening_message  # noqa: E402
 from telegram_bot import send_telegram_message  # noqa: E402
 from trade_tracker import append_evening_recommendations, compute_model_record  # noqa: E402
+from send_markers import write_sent_marker  # noqa: E402
 
 EVENING_SEND_MARKER = "data/last_evening_send.txt"
 
@@ -49,12 +50,11 @@ def main():
     append_evening_recommendations(recommendations, tomorrow_date)
     print(f"Logged {len(recommendations)} trade(s) to data/trades.csv")
 
-    # Marker for check_and_retry_evening_picks.py's safety net - written only
-    # after a confirmed successful send, so a stalled/failed run (whatever
-    # the cause) is detectable even when there were 0 recommendations that
-    # night (which would otherwise leave no trace in trades.csv either way).
-    with open(EVENING_SEND_MARKER, "w") as f:
-        f.write(datetime.now(CENTRAL).date().isoformat())
+    # Marker for the safety-net retry - written only after a confirmed
+    # successful send, so a stalled/failed run (whatever the cause) is
+    # detectable even when there were 0 recommendations that night (which
+    # would otherwise leave no trace in trades.csv either way).
+    write_sent_marker(EVENING_SEND_MARKER, datetime.now(CENTRAL).date())
 
 
 if __name__ == "__main__":

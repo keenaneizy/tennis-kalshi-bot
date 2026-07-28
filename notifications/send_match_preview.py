@@ -19,6 +19,9 @@ from predict_upcoming import generate_recommendations  # noqa: E402
 from fetch_kalshi import CENTRAL  # noqa: E402
 from format_messages import format_match_preview_message  # noqa: E402
 from telegram_bot import send_telegram_message  # noqa: E402
+from send_markers import write_sent_marker  # noqa: E402
+
+SENT_MARKER = "data/last_match_preview_send.txt"
 
 
 def main():
@@ -34,6 +37,8 @@ def main():
 
     send_telegram_message(message)
     print("\nSent to Telegram.")
+
+    write_sent_marker(SENT_MARKER, datetime.now(CENTRAL).date())
 
 
 if __name__ == "__main__":
